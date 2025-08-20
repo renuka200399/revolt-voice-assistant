@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rev Voice Assistant</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="assistant-container">
+            <div class="assistant-avatar" id="assistant-avatar">
+                <div class="avatar-ring"></div>
+                <div class="avatar-inner">
+                    <i class="fas fa-bolt"></i>
+                </div>
+                <div class="voice-waves">
+                    <div class="wave"></div>
+                    <div class="wave"></div>
+                    <div class="wave"></div>
+                    <div class="wave"></div>
+                </div>
+            </div>
+            
+            <div class="assistant-status">
+                <div class="status" id="status">
+                    <span class="status-indicator"></span>
+                    <span class="status-text">Ready</span>
+                </div>
+            </div>
+            
+            <div class="language-picker">
+                <select id="language-select">
+                    <option value="en-US">English 🇺🇸</option>
+                    <option value="en-IN">English 🇮🇳</option>
+                    <option value="hi-IN">हिंदी 🇮🇳</option>
+                    <option value="ta-IN">தமிழ் 🇮🇳</option>
+                    <option value="te-IN">తెలుగు 🇮🇳</option>
+                    <option value="kn-IN">ಕನ್ನಡ 🇮🇳</option>
+                    <option value="ml-IN">മലയാളം 🇮🇳</option>
+                    <option value="mr-IN">मराठी 🇮🇳</option>
+                    <option value="gu-IN">ગુજરાતી 🇮🇳</option>
+                    <option value="bn-IN">বাংলা 🇮🇳</option>
+                    <option value="pa-IN">ਪੰਜਾਬੀ 🇮🇳</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="chat-container">
+            <div class="chat-welcome" id="chat-welcome">
+                <h1>Talk to Rev</h1>
+                <p>Your Revolt Motors Assistant</p>
+                <div class="suggestion-chips">
+                    <button class="chip">Tell me about RV400</button>
+                    <button class="chip">Battery specs</button>
+                    <button class="chip">Service locations</button>
+                </div>
+            </div>
+            
+            <div id="chat-messages" class="chat-messages"></div>
+        </div>
+
+        <div class="input-area">
+            <button id="mic-button" class="mic-button">
+                <i class="fas fa-microphone"></i>
+            </button>
+            <div class="text-input-container">
+                <input type="text" id="text-input" placeholder="Message Rev..." />
+                <button id="send-button">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+        
+        <button id="reset-button" class="reset-button">
+            <i class="fas fa-redo-alt"></i>
+        </button>
+    </div>
+    
+    <div class="floating-particles">
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>
