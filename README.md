@@ -10,7 +10,8 @@ A real-time, multilingual voice assistant for Revolt Motors using Google's Gemin
 - 💬 **Human-Like Responses** - Dynamic, personality-driven speech patterns
 - ⚡ **Low Latency** - Quick response times for natural conversation flow
 - 🔄 **Voice Language Switching** - Change languages mid-conversation using voice commands
-- 
+-
+
 ## Technology Stack
 
 - **Frontend**: HTML5, CSS3, JavaScript
@@ -31,23 +32,30 @@ A real-time, multilingual voice assistant for Revolt Motors using Google's Gemin
 ### Setup Instructions
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/yourusername/rev-voice-assistant.git
    cd rev-voice-assistant
    ```
 
 2. Install dependencies:
+
    ```bash
    npm install
    ```
 
 3. Create a `.env` file in the root directory:
+
    ```
    GEMINI_API_KEY=your_gemini_api_key_here
    PORT=3000
+
+   DEFAULT_GEMINI_MODEL=gemini-2.0-flash-exp
+   Optional; see “Changing models” below.
    ```
 
 4. Start the development server:
+
    ```bash
    npm run dev
    ```
@@ -55,6 +63,19 @@ A real-time, multilingual voice assistant for Revolt Motors using Google's Gemin
 5. Open your browser and navigate to:
    ```
    http://localhost:3000
+   
+## Changing Models
+You can change the Gemini model in three ways. This is useful to:
+
+Use a model with more generous free-tier limits (e.g., gemini-1.5-flash)
+Fall back when one model hits daily quota (HTTP 429 with QuotaFailure)
+Swap performance/cost characteristics
+Common model IDs:
+
+gemini-1.5-flash (fast, cost-effective, great default)
+gemini-1.5-flash-8b (smaller, cheaper)
+gemini-2.0-flash-exp (experimental; may have tighter free-tier limits)
+gemini-1.5-pro (more capable; higher cost and lower free-tier)
    ```
 
 ## Usage Guide
@@ -69,6 +90,7 @@ A real-time, multilingual voice assistant for Revolt Motors using Google's Gemin
 ### Language Support
 
 The assistant supports the following languages:
+
 - English (US/India)
 - Hindi (हिंदी)
 - Tamil (தமிழ்)
@@ -88,10 +110,10 @@ Modify the `personalityTraits` object in the `VoiceAssistant` constructor to cha
 
 ```javascript
 this.personalityTraits = {
-    friendliness: 0.8,  // 0.0 (formal) to 1.0 (very friendly)
-    formality: 0.4,     // 0.0 (casual) to 1.0 (very formal)
-    enthusiasm: 0.7,    // 0.0 (calm) to 1.0 (very enthusiastic)
-    helpfulness: 0.9    // 0.0 (concise) to 1.0 (very detailed)
+  friendliness: 0.8, // 0.0 (formal) to 1.0 (very friendly)
+  formality: 0.4, // 0.0 (casual) to 1.0 (very formal)
+  enthusiasm: 0.7, // 0.0 (calm) to 1.0 (very enthusiastic)
+  helpfulness: 0.9, // 0.0 (concise) to 1.0 (very detailed)
 };
 ```
 
@@ -101,12 +123,12 @@ The assistant uses a Revolt Motors-inspired orange and dark theme by default. To
 
 ```css
 :root {
-    --primary-color: #FF5722;     /* Main accent color */
-    --secondary-color: #3A3A3A;   /* Secondary color */
-    --accent-color: #FF9800;      /* Highlight color */
-    --light-color: #FFF4E6;       /* Background light color */
-    --dark-color: #212121;        /* Text dark color */
-    --bg-color: #F8F8F8;          /* Page background */
+  --primary-color: #ff5722; /* Main accent color */
+  --secondary-color: #3a3a3a; /* Secondary color */
+  --accent-color: #ff9800; /* Highlight color */
+  --light-color: #fff4e6; /* Background light color */
+  --dark-color: #212121; /* Text dark color */
+  --bg-color: #f8f8f8; /* Page background */
 }
 ```
 

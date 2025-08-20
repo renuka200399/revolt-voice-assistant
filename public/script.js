@@ -35,7 +35,7 @@ class VoiceAssistant {
         };
         this.conversationContext = [];
 
-        // DOM elements
+        // Dom elements
         this.micButton = document.getElementById('mic-button');
         this.textInput = document.getElementById('text-input');
         this.sendButton = document.getElementById('send-button');
@@ -43,6 +43,18 @@ class VoiceAssistant {
         this.statusElement = document.getElementById('status');
         this.languageSelect = document.getElementById('language-select');
         this.assistantAvatar = document.getElementById('assistant-avatar');
+
+        // New: LLM concurrency + dedupe + quota guard
+        this.llmBusy = false;           // only one LLM request at a time
+        this.pendingText = null;        // hold the next question if user asks while busy
+        this._lastTextSent = "";        // avoid duplicate sends
+
+        this.quotaGuard = {
+            locked: false,
+            unlockAt: 0,       // ms epoch
+            bannerTimer: null,
+            bannerEl: null
+        };
 
         this.init();
     }
@@ -54,23 +66,130 @@ class VoiceAssistant {
         this.setupAudioDetection(); // optional, not used for barge-in
         this.initVoices();
 
+        // Restore quota lock (if previously reached)
+        this.restoreQuotaGuard();
+
         // Welcome message with personality
         this.showWelcomeMessage();
     }
 
-    showWelcomeMessage() {
-        const welcomeMessages = [
-            "Hi there! I'm Rev, your Revolt Motors assistant. Just click the mic and ask me anything!",
-            "Hello! I'm ready to help with all your Revolt Motors questions. Click the mic to start chatting.",
-            "Welcome! I'm Rev, your friendly Revolt Motors guide. Hit the mic button when you're ready to talk.",
-            "Hey there! Ready to talk about Revolt Motors? Just click the mic button to start our conversation."
-        ];
+    // ---------- Quota guard ----------
+    restoreQuotaGuard() {
+        const unlockAt = Number(localStorage.getItem('quota_unlock_at') || 0);
+        if (unlockAt && unlockAt > Date.now()) {
+            this.lockQuota('Daily limit reached', unlockAt);
+        }
+    }
 
-        const randomIndex = Math.floor(Math.random() * welcomeMessages.length);
-        setTimeout(() => {
-            this.showMessage('Rev', welcomeMessages[randomIndex], 'assistant');
-            this.speakText(welcomeMessages[randomIndex]);
-        }, 500);
+    getNextLocalMidnightMs() {
+        const d = new Date();
+        d.setHours(24, 0, 0, 0);
+        return d.getTime();
+    }
+
+    lockQuota(reason = 'Daily limit reached', unlockAtMs = this.getNextLocalMidnightMs()) {
+        if (this.quotaGuard.locked) return;
+        this.quotaGuard.locked = true;
+        this.quotaGuard.unlockAt = unlockAtMs;
+        localStorage.setItem('quota_unlock_at', String(unlockAtMs));
+
+        // Disable input
+        if (this.micButton) this.micButton.disabled = true;
+        if (this.sendButton) this.sendButton.disabled = true;
+        if (this.textInput) {
+            this.textInput.disabled = true;
+            this.textInput.placeholder = 'Daily limit reached. Try again after reset.';
+        }
+
+        this.updateStatus('rate-limited', 'Daily limit reached');
+        this.showQuotaBanner(reason);
+
+        // Stop TTS/ASR gracefully
+        try { this.synthesis.cancel(); } catch(e) {}
+        if (this.isListening && this.recognition) {
+            try { this.recognition.stop(); } catch(e) {}
+            this.isListening = false;
+        }
+    }
+
+    unlockQuota() {
+        this.quotaGuard.locked = false;
+        this.quotaGuard.unlockAt = 0;
+        localStorage.removeItem('quota_unlock_at');
+
+        if (this.quotaGuard.bannerTimer) clearInterval(this.quotaGuard.bannerTimer);
+        this.quotaGuard.bannerTimer = null;
+        if (this.quotaGuard.bannerEl) {
+            this.quotaGuard.bannerEl.remove();
+            this.quotaGuard.bannerEl = null;
+        }
+
+        if (this.micButton) this.micButton.disabled = false;
+        if (this.sendButton) this.sendButton.disabled = false;
+        if (this.textInput) {
+            this.textInput.disabled = false;
+            this.textInput.placeholder = 'Type a message...';
+        }
+        this.updateStatus('connected', 'Ready');
+    }
+
+    showQuotaBanner(reason) {
+        if (this.quotaGuard.bannerEl) return;
+
+        const el = document.createElement('div');
+        el.id = 'quota-banner';
+        el.style.position = 'fixed';
+        el.style.top = '0';
+        el.style.left = '0';
+        el.style.right = '0';
+        el.style.zIndex = '1001';
+        el.style.background = '#d32f2f';
+        el.style.color = 'white';
+        el.style.padding = '10px 14px';
+        el.style.display = 'flex';
+        el.style.justifyContent = 'space-between';
+        el.style.alignItems = 'center';
+        el.style.fontSize = '14px';
+        el.innerHTML = `
+          <span>⚠️ ${reason} — resets in <strong id="quota-countdown">--:--</strong></span>
+          <span style="display:flex; gap:8px; align-items:center;">
+            <button id="quota-switch-model" style="background:#424242;color:#fff;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">Use backup model</button>
+            <button id="quota-dismiss" style="background:#9e9e9e;color:#fff;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">Hide</button>
+          </span>
+        `;
+        document.body.appendChild(el);
+        this.quotaGuard.bannerEl = el;
+
+        const updateCountdown = () => {
+            const left = Math.max(0, this.quotaGuard.unlockAt - Date.now());
+            if (left <= 0) {
+                this.unlockQuota();
+                return;
+            }
+            const mm = String(Math.floor(left / 60000)).padStart(2, '0');
+            const ss = String(Math.floor((left % 60000) / 1000)).padStart(2, '0');
+            const span = el.querySelector('#quota-countdown');
+            if (span) span.textContent = `${mm}:${ss}`;
+        };
+        updateCountdown();
+        this.quotaGuard.bannerTimer = setInterval(updateCountdown, 1000);
+
+        el.querySelector('#quota-dismiss').addEventListener('click', () => {
+            el.style.display = 'none'; // keeps lock, just hides banner
+        });
+
+        el.querySelector('#quota-switch-model').addEventListener('click', () => {
+            this.sendMessage({ type: 'switch_model', model: 'gemini-1.5-flash' });
+            this.showMessage('System', 'Requesting backup model (gemini-1.5-flash)...', 'system');
+        });
+    }
+
+    isQuotaExceededMessage(msg = '') {
+        const m = String(msg).toLowerCase();
+        return m.includes('exceeded your current quota')
+            || (m.includes('quota') && m.includes('exceeded'))
+            || m.includes('too many requests')   // 429
+            || m.includes('perday') || m.includes('per day');
     }
 
     // ---------- Voices & TTS helpers ----------
@@ -382,6 +501,11 @@ class VoiceAssistant {
             return;
         }
 
+        // Avoid duplicate sends
+        if (text && text.trim() === this._lastTextSent) {
+            return;
+        }
+
         this.showThinkingIndicator();
         this.sendTextToServer(text);
         this.conversationActive = true;
@@ -534,6 +658,10 @@ class VoiceAssistant {
                 this.isSpeaking = false;
                 this.conversationContext = [];
 
+                this.llmBusy = false;
+                this.pendingText = null;
+                this._lastTextSent = "";
+
                 this.sendMessage({ type: 'reset' });
             });
         }
@@ -671,7 +799,7 @@ class VoiceAssistant {
             'hi-IN': "अब मैं हिंदी में बात करूंगा। मैं आपकी कैसे मदद कर सकता हूं?",
             'ta-IN': "இப்போது நான் தமிழில் பேசுவேன். நான் உங்களுக்கு எப்படி உதவ முடியும்?",
             'te-IN': "ఇప్పుడు నేను తెలుగులో మాట్లాడతాను. నేను మీకు ఎలా సహాయం చేయగలను?",
-            'kn-IN': "ಈಗ ನಾನು ಕನ್ನಡದಲ್ಲಿ ಮಾತನಾಡುತ್ತೇನೆ. ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?",
+            'kn-IN': "ಈಗ ನಾನು ಕನ್ನಡದಲ್ಲಿ ಮಾತನಾಡುತ್ತೇನೆ. 나는 ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?",
             'ml-IN': "ഇപ്പോൾ ഞാൻ മലയാളത്തിൽ സംസാരിക്കും. എനിക്ക് നിങ്ങളെ എങ്ങനെ സഹായിക്കാം?",
             'mr-IN': "आता मी मराठीत बोलेन. मी तुमची कशी मदत करू शकतो?",
             'gu-IN': "હવે હું ગુજરાતીમાં વાત કરીશ. હું તમને કેવી રીતે મદદ કરી શકું?",
@@ -706,16 +834,46 @@ class VoiceAssistant {
     sendTextToServer(text) {
         if (!text || !this.isConnected) return;
 
+        // Quota lock
+        if (this.quotaGuard.locked) {
+            this.showMessage('System', 'We hit today’s limit. Please try again after the reset, or switch models.', 'system');
+            return;
+        }
+
+        // Dedupe identical sends
+        const normalized = text.trim();
+        if (normalized && normalized === this._lastTextSent) {
+            return;
+        }
+
+        // Only one in-flight request; queue the next
+        if (this.llmBusy) {
+            this.pendingText = normalized;
+            this.showMessage('System', 'Let me finish answering first. I’ll take your next question right after.', 'system');
+            return;
+        }
+
+        this.llmBusy = true;
+        this._lastTextSent = normalized;
+
         const contextToSend = this.conversationContext.slice(-4);
 
         this.sendMessage({
             type: 'text',
-            text: text,
+            text: normalized,
             language: this.selectedLanguage,
             context: contextToSend
         });
 
         this.updateStatus('processing', 'Thinking...');
+    }
+
+    flushPendingIfAny() {
+        if (this.pendingText && !this.quotaGuard.locked) {
+            const next = this.pendingText;
+            this.pendingText = null;
+            setTimeout(() => this.sendTextToServer(next), 250);
+        }
     }
 
     sendMessage(data) {
@@ -742,16 +900,23 @@ class VoiceAssistant {
                 break;
 
             case 'processing_start':
+                this.llmBusy = true;
                 this.updateStatus('processing', 'Thinking...');
                 this.assistantAvatar.className = 'assistant-avatar thinking';
                 break;
 
             case 'processing_end':
+                this.llmBusy = false;
                 this.updateStatus('connected', 'Ready');
                 this.assistantAvatar.className = 'assistant-avatar';
+                this.flushPendingIfAny();
                 break;
 
             case 'response':
+                this.llmBusy = false;
+                this.updateStatus('connected', 'Ready');
+                this.assistantAvatar.className = 'assistant-avatar';
+
                 this.conversationContext.push({
                     role: 'assistant',
                     text: data.text,
@@ -766,13 +931,48 @@ class VoiceAssistant {
 
                 // Speak the response in the selected language (ASR remains active for barge-in)
                 this.speakText(humanizedText);
+
+                this.flushPendingIfAny();
                 break;
 
-            case 'error':
-                const friendlyError = this.makeErrorFriendly(data.message);
-                this.showMessage('Rev', friendlyError, 'assistant');
-                this.speakText(friendlyError);
+            case 'error': {
+                this.llmBusy = false;
+
+                // Friendly message by default
+                const friendlyError = this.makeErrorFriendly(data.message || '');
+                // If server forwards quota/rate details
+                const retryAfterMs = typeof data.retryAfterMs === 'number' ? data.retryAfterMs : null;
+                const isDaily = data.code === 'DailyQuotaExceeded' || this.isQuotaExceededMessage(data.message);
+
+                if (isDaily) {
+                    const unlock = data.resetsAtMs || this.getNextLocalMidnightMs();
+                    this.lockQuota('Daily quota exceeded', unlock);
+                    this.showMessage('Rev', 'I’ve reached my daily limit for this model. You can try a backup model or come back after the reset.', 'assistant');
+                } else if (retryAfterMs) {
+                    this.showMessage('Rev', `I’m being rate-limited. Retrying in ${Math.ceil(retryAfterMs/1000)}s…`, 'assistant');
+                    setTimeout(() => this.flushPendingIfAny(), retryAfterMs);
+                } else {
+                    this.showMessage('Rev', friendlyError, 'assistant');
+                }
+
+                this.flushPendingIfAny();
                 break;
+            }
+
+            case 'quota_exceeded': {
+                // If implemented server-side: cleaner than parsing strings
+                const unlock = data.resetsAtMs || this.getNextLocalMidnightMs();
+                this.lockQuota(`Daily limit for ${data.model || 'current model'} reached`, unlock);
+                break;
+            }
+
+            case 'model_switched': {
+                const model = data.model || 'backup model';
+                this.showMessage('System', `Switched to ${model}.`, 'system');
+                // Unlock UI since we’re on a new bucket
+                this.unlockQuota();
+                break;
+            }
 
             case 'interrupted':
                 this.updateStatus('connected', 'I heard you!');
@@ -940,9 +1140,22 @@ class VoiceAssistant {
 
         this.synthesis.speak(utterance);
     }
-}
 
-// Initialize voice list when available (handled in class via initVoices)
+    showWelcomeMessage() {
+        const welcomeMessages = [
+            "Hi there! I'm Rev, your Revolt Motors assistant. Just click the mic and ask me anything!",
+            "Hello! I'm ready to help with all your Revolt Motors questions. Click the mic to start chatting.",
+            "Welcome! I'm Rev, your friendly Revolt Motors guide. Hit the mic button when you're ready to talk.",
+            "Hey there! Ready to talk about Revolt Motors? Just click the mic button to start our conversation."
+        ];
+
+        const randomIndex = Math.floor(Math.random() * welcomeMessages.length);
+        setTimeout(() => {
+            this.showMessage('Rev', welcomeMessages[randomIndex], 'assistant');
+            this.speakText(welcomeMessages[randomIndex]);
+        }, 500);
+    }
+}
 
 // Initialize the assistant when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
@@ -960,7 +1173,36 @@ document.addEventListener('DOMContentLoaded', () => {
     forceEnglishBtn.style.border = 'none';
     forceEnglishBtn.style.borderRadius = '5px';
     forceEnglishBtn.style.cursor = 'pointer';
+    forceEnglishBtn.title = 'Force switch to English (ASR + TTS)';
+    forceEnglishBtn.addEventListener('click', () => {
+        if (window.voiceAssistant) {
+            window.voiceAssistant.changeLanguage('en-US');
+        }
+    });
     document.body.appendChild(forceEnglishBtn);
+
+    // Optional: "Use backup model" button (requires server support)
+    const switchModelBtn = document.createElement('button');
+    switchModelBtn.id = 'switch-model';
+    switchModelBtn.innerHTML = 'Use backup model';
+    switchModelBtn.style.position = 'fixed';
+    switchModelBtn.style.top = '10px';
+    switchModelBtn.style.right = '170px';
+    switchModelBtn.style.zIndex = '1000';
+    switchModelBtn.style.padding = '10px';
+    switchModelBtn.style.background = '#424242';
+    switchModelBtn.style.color = 'white';
+    switchModelBtn.style.border = 'none';
+    switchModelBtn.style.borderRadius = '5px';
+    switchModelBtn.style.cursor = 'pointer';
+    switchModelBtn.title = 'Switch to a backup model (requires server support)';
+    switchModelBtn.addEventListener('click', () => {
+        if (window.voiceAssistant) {
+            window.voiceAssistant.sendMessage({ type: 'switch_model', model: 'gemini-1.5-flash' });
+            window.voiceAssistant.showMessage('System', 'Requesting backup model (gemini-1.5-flash)...', 'system');
+        }
+    });
+    document.body.appendChild(switchModelBtn);
 
     // Create and add CSS for animations and visual feedback
     const styleElement = document.createElement('style');
